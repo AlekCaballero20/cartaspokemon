@@ -1,0 +1,2 @@
+# cartaspokemon
+Cartas Pokemón TCG
