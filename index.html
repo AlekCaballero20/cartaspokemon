@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+
+  <title>Pokémon TCG Database</title>
+  <meta name="description" content="Base de datos Pokémon TCG: ver, buscar, agregar y editar cartas (TSV + Apps Script)." />
+
+  <!-- Solo light (porque la vida ya es suficientemente oscura) -->
+  <meta name="color-scheme" content="light" />
+  <meta name="theme-color" content="#f6f8ff" />
+
+  <!-- Performance hints (TSV + Apps Script) -->
+  <link rel="preconnect" href="https://script.google.com" crossorigin />
+  <link rel="preconnect" href="https://docs.google.com" crossorigin />
+
+  <!-- PWA (si no tienes estos archivos aún, bórralos o créalos para evitar 404 en consola) -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+
+  <!-- Iconos -->
+  <link rel="icon" href="./assets/icon-192.png" />
+  <link rel="apple-touch-icon" href="./assets/icon-192.png" />
+  <link rel="icon"
+        type="image/svg+xml"
+        href='data:image/svg+xml;utf8,
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+          <defs>
+            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="%23e92b2b"/>
+              <stop offset="1" stop-color="%231fb6ff"/>
+            </linearGradient>
+          </defs>
+          <rect width="128" height="128" rx="28" fill="url(%23g)"/>
+          <circle cx="46" cy="44" r="18" fill="white" fill-opacity=".35"/>
+          <circle cx="78" cy="78" r="28" fill="white" fill-opacity=".20"/>
+        </svg>' />
+
+  <link rel="stylesheet" href="./styles.css" />
+  <meta name="format-detection" content="telephone=no" />
+
+  <!-- Social (opcional pero fino) -->
+  <meta property="og:title" content="Pokémon TCG Database" />
+  <meta property="og:description" content="Organiza, busca y edita tu colección TCG (TSV + Apps Script)." />
+  <meta property="og:type" content="website" />
+</head>
+
+<body>
+  <!-- Skip link (solo visible con teclado por el CSS) -->
+  <a class="skip-link" href="#main">Saltar al contenido</a>
+
+  <div class="app" id="app">
+
+    <!-- DATALISTS (listas vivas: app.js las llena con TSV + localStorage) -->
+    <datalist id="dlSet"></datalist>
+    <datalist id="dlAnio"></datalist>
+    <datalist id="dlTipo"></datalist>
+
+    <!-- Topbar -->
+    <header class="topbar" role="banner">
+      <div class="brand" aria-label="Marca">
+        <div class="brand-dot" aria-hidden="true"></div>
+        <div class="brand-text">
+          <div class="brand-title">Pokémon TCG Database</div>
+          <div class="brand-sub">TSV (lectura) + Apps Script (guardar)</div>
+        </div>
+      </div>
+
+      <div class="top-actions" aria-label="Acciones principales">
+        <button class="btn ghost" id="btnReload" type="button" title="Recargar (R)">Recargar</button>
+        <button class="btn primary" id="btnNew" type="button" title="Nueva carta (N)">Nueva</button>
+
+        <div class="status" aria-live="polite" aria-label="Estado de conexión y carga">
+          <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+          <span class="status-pill" id="statusPill">
+            <span class="status-text" id="statusText">Listo</span>
+          </span>
+        </div>
+      </div>
+    </header>
+
+    <!-- HERO -->
+    <section class="hero" aria-label="Encabezado visual">
+      <div class="hero-media" aria-hidden="true">
+        <img class="hero-img" src="./pokemon.webp" alt="" loading="eager" />
+        <div class="hero-gloss" aria-hidden="true"></div>
+      </div>
+
+      <div class="hero-copy">
+        <div class="hero-kicker">Pokédex personal</div>
+        <h1 class="hero-title">Organiza, busca y edita tu colección TCG</h1>
+        <p class="hero-sub">
+          Lectura desde TSV publicado y guardado vía Apps Script. Todo en modo claro, porque los ojos también merecen vivir.
+        </p>
+
+        <div class="hero-chips" aria-hidden="true">
+          <span class="chip red">Set</span>
+          <span class="chip cyan">Elemento</span>
+          <span class="chip blue">HP</span>
+          <span class="chip gray">Precio</span>
+          <span class="chip gray">Evolución</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Toolbar -->
+    <section class="toolbar" aria-label="Búsqueda">
+      <div class="searchbox">
+        <input
+          id="search"
+          type="search"
+          inputmode="search"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="Buscar por Nombre, Set, #, Tipo, Elemento, Evolución…"
+          aria-label="Buscar cartas"
+        />
+        <button class="btn ghost" id="btnClearSearch" type="button" title="Limpiar búsqueda (Esc)">Limpiar</button>
+      </div>
+
+      <div class="meta">
+        <span class="count" id="countText" aria-live="polite">0 resultados</span>
+      </div>
+    </section>
+
+    <!-- Table -->
+    <main class="content" id="main" role="main">
+      <div class="table-wrap">
+        <table class="table" aria-label="Base de datos de cartas" id="dbTable">
+          <thead>
+            <tr>
+              <th scope="col">#</th>
+              <th scope="col">Nombre</th>
+              <th scope="col">Tipo</th>
+              <th scope="col">Elemento</th>
+              <th scope="col">HP</th>
+              <th scope="col">Set</th>
+              <th scope="col">Cant.</th>
+              <th scope="col">Precio</th>
+              <th scope="col">Fecha</th>
+              <th scope="col" class="th-actions">Acciones</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- render por JS -->
+          </tbody>
+        </table>
+      </div>
+    </main>
+
+    <!-- Drawer Overlay -->
+    <div class="overlay" id="overlay" hidden></div>
+
+    <!-- Drawer -->
+    <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Editor de carta">
+      <header class="drawer-head">
+        <div class="drawer-titles">
+          <div class="drawer-title" id="drawerTitle">Nueva carta</div>
+          <div class="drawer-subtitle" id="drawerSubtitle">Completa los datos y guarda</div>
+        </div>
+
+        <div class="drawer-head-actions">
+          <button class="btn ghost" id="btnDuplicate" type="button" title="Duplicar">Duplicar</button>
+          <button class="btn ghost" id="btnCloseDrawer" type="button" title="Cerrar (Esc)">Cerrar</button>
+        </div>
+      </header>
+
+      <div class="drawer-body">
+        <form id="cardForm" class="form" autocomplete="off">
+          <input id="rowIndex" type="hidden" />
+          <div class="form-meta" id="formMeta" aria-live="polite"></div>
+
+          <!-- Identidad -->
+          <section class="form-section">
+            <div class="section-title">Identidad</div>
+            <div class="grid">
+              <label class="field">
+                <span class="label">#</span>
+                <input id="num" type="text" placeholder="Ej: 012/198" />
+                <span class="hint">Número dentro del set (si aplica).</span>
+              </label>
+
+              <label class="field">
+                <span class="label">Set</span>
+                <input id="edicion" type="text" list="dlSet" placeholder="Ej: Scarlet &amp; Violet" />
+                <span class="hint">Autocompleta con sets ya guardados.</span>
+              </label>
+
+              <label class="field">
+                <span class="label">Año</span>
+                <input id="anio" type="number" list="dlAnio" inputmode="numeric" min="1996" max="2100" placeholder="Ej: 2024" />
+                <span class="hint">Autocompleta con años existentes.</span>
+              </label>
+
+              <label class="field span-2">
+                <span class="label">Nombre</span>
+                <input id="nombre" type="text" placeholder="Ej: Pikachu" required />
+              </label>
+            </div>
+          </section>
+
+          <!-- Tipo & Stats -->
+          <section class="form-section">
+            <div class="section-title">Tipo &amp; Stats</div>
+            <div class="grid">
+              <label class="field">
+                <span class="label">Tipo</span>
+                <input id="categoria" type="text" list="dlTipo" placeholder="Ej: Pokémon / Entrenador / Energía" />
+                <span class="hint">Autocompleta con tipos existentes.</span>
+              </label>
+
+              <label class="field">
+                <span class="label">Subtipo</span>
+                <input id="subtipo" type="text" placeholder="Ej: Básico / Fase 1 / Item / Supporter…" />
+              </label>
+
+              <label class="field">
+                <span class="label">Elemento</span>
+                <input id="atributo" type="text" placeholder="Ej: Eléctrico / Fuego / Agua…" />
+              </label>
+
+              <label class="field">
+                <span class="label">HP</span>
+                <input id="nivel" type="number" inputmode="numeric" min="0" max="999" placeholder="Ej: 90" />
+              </label>
+
+              <!-- (Quitado) EnergíaCoste / atk -->
+
+              <!-- legacy oculto para compatibilidad -->
+              <label class="field" style="display:none">
+                <span class="label">DEF (legacy)</span>
+                <input id="def" type="text" />
+              </label>
+
+              <label class="field" style="display:none">
+                <span class="label">Rareza (legacy)</span>
+                <input id="rareza" type="text" />
+              </label>
+            </div>
+          </section>
+
+          <!-- Evolución -->
+          <section class="form-section">
+            <div class="section-title">Evolución</div>
+            <div class="grid">
+              <label class="field span-2">
+                <span class="label">Evoluciona de</span>
+                <input id="evoluciona_de" type="text" placeholder="Ej: Pichu (si aplica)" />
+                <span class="hint">Si la carta dice “Evoluciona de …”.</span>
+              </label>
+
+              <label class="field span-2">
+                <span class="label">Evoluciona a</span>
+                <input id="evoluciona_a" type="text" placeholder="Ej: Raichu (si aplica)" />
+                <span class="hint">Si sabes a qué evoluciona (opcional).</span>
+              </label>
+            </div>
+          </section>
+
+          <!-- Inventario -->
+          <section class="form-section">
+            <div class="section-title">Inventario</div>
+            <div class="grid">
+              <label class="field">
+                <span class="label">Cantidad</span>
+                <input id="cantidad" type="number" inputmode="numeric" min="0" max="999" placeholder="Ej: 1" />
+              </label>
+
+              <label class="field">
+                <span class="label">Idioma</span>
+                <input id="idioma" type="text" placeholder="Ej: ES / EN / JP" />
+              </label>
+
+              <label class="field">
+                <span class="label">Precio</span>
+                <input id="precio" type="number" inputmode="decimal" min="0" step="0.01" placeholder="Ej: 25000" />
+              </label>
+
+              <label class="field">
+                <span class="label">Fecha</span>
+                <input id="fecha_compra" type="date" />
+              </label>
+            </div>
+          </section>
+
+          <!-- Media -->
+          <section class="form-section">
+            <div class="section-title">Media</div>
+            <div class="grid">
+              <label class="field span-2">
+                <span class="label">ImagenURL</span>
+                <input id="imagenurl" type="url" placeholder="https://…" />
+                <span class="hint">Link directo a la imagen (si tienes).</span>
+              </label>
+
+              <!-- legacy oculto para compatibilidad -->
+              <label class="field" style="display:none">
+                <span class="label">Mazo (legacy)</span>
+                <input id="mazo" type="text" />
+              </label>
+            </div>
+          </section>
+
+          <!-- Notas -->
+          <section class="form-section">
+            <div class="section-title">Notas</div>
+            <label class="field">
+              <textarea id="notas" rows="4" placeholder="Notas, estado, dónde la conseguiste, etc."></textarea>
+            </label>
+          </section>
+
+          <footer class="drawer-foot">
+            <div class="foot-left">
+              <button class="btn ghost" id="btnCancel" type="button">Cancelar</button>
+            </div>
+            <div class="foot-right">
+              <button class="btn primary" id="btnSave" type="submit">Guardar</button>
+            </div>
+          </footer>
+        </form>
+      </div>
+    </aside>
+  </div>
+
+  <noscript>
+    <div style="max-width:1120px;margin:16px auto;padding:12px 14px;border:1px solid rgba(11,16,32,.12);border-radius:14px;background:rgba(255,255,255,.9);font-family:system-ui">
+      Esta app necesita JavaScript activado para funcionar.
+    </div>
+  </noscript>
+
+  <!-- ✅ CLAVE: app.js ES MÓDULO -->
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
