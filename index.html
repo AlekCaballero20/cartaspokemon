@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="es">
+<html lang="es-CO">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
@@ -10,16 +10,21 @@
   <!-- Solo light (porque la vida ya es suficientemente oscura) -->
   <meta name="color-scheme" content="light" />
   <meta name="theme-color" content="#f6f8ff" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="referrer" content="strict-origin-when-cross-origin" />
 
   <!-- Performance hints (TSV + Apps Script) -->
   <link rel="preconnect" href="https://script.google.com" crossorigin />
   <link rel="preconnect" href="https://docs.google.com" crossorigin />
 
+  <!-- Preload hero image (siempre visible arriba) -->
+  <link rel="preload" as="image" href="./pokemon.webp" imagesrcset="./pokemon.webp" />
+
   <!-- PWA (si no tienes estos archivos aún, bórralos o créalos para evitar 404 en consola) -->
   <link rel="manifest" href="./manifest.webmanifest" />
 
   <!-- Iconos -->
-  <link rel="icon" href="./assets/icon-192.png" />
+  <link rel="icon" href="./assets/icon-192.png" sizes="192x192" />
   <link rel="apple-touch-icon" href="./assets/icon-192.png" />
   <link rel="icon"
         type="image/svg+xml"
@@ -37,7 +42,6 @@
         </svg>' />
 
   <link rel="stylesheet" href="./styles.css" />
-  <meta name="format-detection" content="telephone=no" />
 
   <!-- Social (opcional pero fino) -->
   <meta property="og:title" content="Pokémon TCG Database" />
@@ -50,11 +54,12 @@
   <a class="skip-link" href="#main">Saltar al contenido</a>
 
   <div class="app" id="app">
-
-    <!-- DATALISTS (listas vivas: app.js las llena con TSV + localStorage) -->
+    <!-- DATALISTS (app.js las llena con TSV + localStorage) -->
     <datalist id="dlSet"></datalist>
     <datalist id="dlAnio"></datalist>
     <datalist id="dlTipo"></datalist>
+    <datalist id="dlSubtipo"></datalist>
+    <datalist id="dlElemento"></datalist>
 
     <!-- Topbar -->
     <header class="topbar" role="banner">
@@ -82,7 +87,7 @@
     <!-- HERO -->
     <section class="hero" aria-label="Encabezado visual">
       <div class="hero-media" aria-hidden="true">
-        <img class="hero-img" src="./pokemon.webp" alt="" loading="eager" />
+        <img class="hero-img" src="./pokemon.webp" alt="" loading="eager" decoding="async" />
         <div class="hero-gloss" aria-hidden="true"></div>
       </div>
 
@@ -112,10 +117,10 @@
           inputmode="search"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Buscar por Nombre, Set, #, Tipo, Elemento, Evolución…"
+          placeholder="Buscar por Nombre, Set, #, Tipo, Subtipo, Elemento, Evolución…"
           aria-label="Buscar cartas"
         />
-        <button class="btn ghost" id="btnClearSearch" type="button" title="Limpiar búsqueda (Esc)">Limpiar</button>
+        <button class="btn ghost" id="btnClearSearch" type="button" title="Limpiar búsqueda">Limpiar</button>
       </div>
 
       <div class="meta">
@@ -124,7 +129,7 @@
     </section>
 
     <!-- Table -->
-    <main class="content" id="main" role="main">
+    <main class="content" id="main" role="main" tabindex="-1">
       <div class="table-wrap">
         <table class="table" aria-label="Base de datos de cartas" id="dbTable">
           <thead>
@@ -176,7 +181,7 @@
             <div class="grid">
               <label class="field">
                 <span class="label">#</span>
-                <input id="num" type="text" placeholder="Ej: 012/198" />
+                <input id="num" type="text" inputmode="numeric" placeholder="Ej: 012/198" />
                 <span class="hint">Número dentro del set (si aplica).</span>
               </label>
 
@@ -211,12 +216,14 @@
 
               <label class="field">
                 <span class="label">Subtipo</span>
-                <input id="subtipo" type="text" placeholder="Ej: Básico / Fase 1 / Item / Supporter…" />
+                <input id="subtipo" type="text" list="dlSubtipo" placeholder="Ej: Básico / Fase 1 / Item / Supporter…" />
+                <span class="hint">Autocompleta con subtipos ya guardados.</span>
               </label>
 
               <label class="field">
                 <span class="label">Elemento</span>
-                <input id="atributo" type="text" placeholder="Ej: Eléctrico / Fuego / Agua…" />
+                <input id="atributo" type="text" list="dlElemento" placeholder="Ej: Eléctrico / Fuego / Agua…" />
+                <span class="hint">Autocompleta con elementos ya guardados.</span>
               </label>
 
               <label class="field">
