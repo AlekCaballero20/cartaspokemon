@@ -9,6 +9,7 @@
    - ✅ Datalists (Tipo/Set/Año) persistentes
    - ✅ Evolución (EvolucionaDe / EvolucionaA) con inyección si falta en HTML
    - ✅ No envía EnergíaCoste / atk
+   - ✅ Mask Identidad (#): auto "/" (Ej: 012/198)
 ============================ */
 
 "use strict";
@@ -92,6 +93,9 @@ const state = {
 init();
 
 function init() {
+  // estado inicial (por si arranca offline)
+  setStatus(dom.statusDot, dom.statusText, state.isOnline ? "ok" : "error", state.isOnline ? "Online" : "Offline");
+
   // (1) asegura inputs base (por si FORM_FIELDS cambió)
   refreshFormRefs_();
 
@@ -100,6 +104,9 @@ function init() {
 
   // (3) refresh refs otra vez (porque quizá inyectamos inputs)
   refreshFormRefs_();
+
+  // (3.5) mask IDENTIDAD (#): auto "/" (input id="num")
+  bindIdentityMask_();
 
   // (4) datalists (Tipo/Set/Año)
   ensureDatalists_();
@@ -123,6 +130,66 @@ function refreshFormRefs_() {
   // También indexa evoluciona_* si existen/inyectamos
   dom.f.evoluciona_de = $("evoluciona_de") || dom.f.evoluciona_de || null;
   dom.f.evoluciona_a  = $("evoluciona_a")  || dom.f.evoluciona_a  || null;
+}
+
+/* =========================
+   IDENTIDAD mask: "012/198"
+   - Solo dígitos
+   - Inserta "/" tras 3 dígitos
+   - Mantiene cursor decente
+========================= */
+function bindIdentityMask_() {
+  const el = $("num");
+  if (!el) return;
+  if (el.dataset.maskBound === "1") return; // evita doble bind
+  el.dataset.maskBound = "1";
+
+  const MAX_DIGITS = 6;   // 3 + 3 (ajústalo si quieres 4/4 etc.)
+  const SPLIT_AT = 3;
+
+  const format = (digits) => {
+    const d = String(digits || "").replace(/\D/g, "").slice(0, MAX_DIGITS);
+    const a = d.slice(0, SPLIT_AT);
+    const b = d.slice(SPLIT_AT);
+    return b ? `${a}/${b}` : a;
+  };
+
+  const digitsCountBefore = (str, pos) => {
+    const left = String(str || "").slice(0, Math.max(0, pos));
+    return (left.match(/\d/g) || []).length;
+  };
+
+  const caretFromDigitsCount = (formatted, digitCount) => {
+    if (digitCount <= 0) return 0;
+    let seen = 0;
+    for (let i = 0; i < formatted.length; i++) {
+      if (/\d/.test(formatted[i])) seen++;
+      if (seen >= digitCount) return i + 1;
+    }
+    return formatted.length;
+  };
+
+  const apply = () => {
+    const prev = el.value || "";
+    const start = el.selectionStart ?? prev.length;
+
+    const digitBefore = digitsCountBefore(prev, start);
+    const next = format(prev);
+
+    if (next !== prev) {
+      el.value = next;
+      const caret = caretFromDigitsCount(next, digitBefore);
+      try { el.setSelectionRange(caret, caret); } catch { /* móvil, a veces no deja */ }
+    }
+  };
+
+  el.addEventListener("input", apply, { passive: true });
+
+  // si el usuario pega "012198" o "012/198", queda bien
+  el.addEventListener("paste", () => setTimeout(apply, 0));
+
+  // opcional: al enfocar, si está vacío, no metemos "/" de una (solo cuando haya dígitos)
+  el.addEventListener("focus", apply, { passive: true });
 }
 
 /* =========================
@@ -172,6 +239,11 @@ function bindUI() {
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeDrawer();
+
+    // mini shortcuts (sin ser cansones)
+    if ((e.target?.tagName || "").toLowerCase() === "input" || (e.target?.tagName || "").toLowerCase() === "textarea") return;
+    if (e.key.toLowerCase() === "r") dom.btnReload?.click?.();
+    if (e.key.toLowerCase() === "n") dom.btnNew?.click?.();
   });
 
   // Delegación tabla: editar por botón o fila
@@ -315,25 +387,25 @@ function buildColIndexFromHeader(header) {
 
   for (const key of Object.keys(HEADER_ALIASES)) {
     const aliases = (HEADER_ALIASES[key] || []).map((a) => norm(a));
-    let idx = -1;
+    let idxFound = -1;
 
     // exact match
     for (let i = 0; i < normHeader.length; i++) {
       const h = normHeader[i];
       if (!h) continue;
-      if (aliases.includes(h)) { idx = i; break; }
+      if (aliases.includes(h)) { idxFound = i; break; }
     }
 
     // contains match
-    if (idx === -1) {
+    if (idxFound === -1) {
       for (let i = 0; i < normHeader.length; i++) {
         const h = normHeader[i];
         if (!h) continue;
-        if (aliases.some((a) => h.includes(a))) { idx = i; break; }
+        if (aliases.some((a) => h.includes(a))) { idxFound = i; break; }
       }
     }
 
-    if (idx !== -1) out[key] = idx;
+    if (idxFound !== -1) out[key] = idxFound;
   }
 
   // compat: si no encuentra _id, asumimos col 0 si parece ser id
@@ -414,6 +486,9 @@ function openDrawer() {
   dom.drawer.classList.add("open");
   dom.drawer.setAttribute("aria-hidden", "false");
   if (dom.overlay) dom.overlay.hidden = false;
+
+  // por si el drawer crea/rehidrata inputs en algún futuro
+  bindIdentityMask_();
 }
 
 function closeDrawer() {
@@ -451,6 +526,9 @@ function fillFormFromRow(row) {
   // Evolución (por si tu schema lo maneja aparte)
   if (dom.f.evoluciona_de) dom.f.evoluciona_de.value = String(getCell(row, "evoluciona_de") || "");
   if (dom.f.evoluciona_a)  dom.f.evoluciona_a.value  = String(getCell(row, "evoluciona_a")  || "");
+
+  // aplica formato identidad al cargar (por si viene raro desde sheet)
+  bindIdentityMask_();
 }
 
 function val(id) {
