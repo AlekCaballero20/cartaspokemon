@@ -1,24 +1,24 @@
 /* ============================
-   Pokémon TCG DB — app.js (PRO Modular vNext · improved)
-   - Entry module (index.html usa: <script type="module" src="./app.js"></script>)
+   Pokémon TCG DB — app.js (PRO Modular vNext · improved FINAL)
+   - Entry module (index.html: <script type="module" src="./app.js"></script>)
    - Lee TSV publicado (GET)
    - Escribe a Apps Script (POST sin preflight)
    - Mapeo robusto por headers (aliases)
-   - UI: tabla compacta + drawer + form
+   - UI: tabla + drawer + form
    - Cache TSV + fallback offline
    - ✅ Datalists persistentes: Tipo/Set/Año/Subtipo/Elemento/Idioma (TSV + localStorage + defaults)
    - ✅ Evolución (EvolucionaDe / EvolucionaA) con inyección si falta en HTML
-   - ✅ No envía EnergíaCoste / atk
+   - ✅ No envía atk/EnergíaCoste
    - ✅ Mask Identidad (#): auto "/" (Ej: 012/198)
    - ✅ Click en botón Editar o en la fila
-   - ✅ Anti-duplicados al agregar: avisa y permite (sumar cantidad / duplicar / descartar)
+   - ✅ Anti-duplicados al agregar: descartar / duplicar / sumar cantidad
 ============================ */
 
 "use strict";
 
 import { CFG } from "./config.js";
 import { fetchTSVText, parseTSV, postJSONNoPreflight } from "./services.api.js";
-import { HEADER_ALIASES, FORM_FIELDS, UI_TO_SHEET, SHEET_TO_UI } from "./data.schema.js";
+import { HEADER_ALIASES, FORM_FIELDS, UI_TO_SHEET } from "./data.schema.js";
 import { filterRows } from "./ui.filters.js";
 import { renderTable, renderCount, setStatus, toast, renderSkeleton } from "./ui.render.js";
 import { norm, debounce, isFiniteInteger, isFiniteNumber, formatTimeAgo, makeId } from "./utils.js";
@@ -56,7 +56,7 @@ const dom = {
   rowIndex: $("rowIndex"),
   formMeta: $("formMeta"),
 
-  // Form inputs (se rellena abajo, y se rehidrata si inyectamos nuevos campos)
+  // Form inputs (se rellena dinámicamente)
   f: {},
 };
 
@@ -70,22 +70,18 @@ const LISTS = {
   set:      { inputId: "edicion",   dlId: "dlSet",      lsKey: "pkm_list_set_v1" },
   anio:     { inputId: "anio",      dlId: "dlAnio",     lsKey: "pkm_list_anio_v1" },
   elemento: { inputId: "atributo",  dlId: "dlElemento", lsKey: "pkm_list_elemento_v1" },
-
-  // ✅ NUEVO: Idioma como lista persistente
   idioma:   { inputId: "idioma",    dlId: "dlIdioma",   lsKey: "pkm_list_idioma_v1" },
 };
 
-// Defaults mínimos para Idioma (por si el TSV viene pelado o el storage está vacío)
 const DEFAULT_IDIOMAS = Object.freeze(["ES", "EN", "JP", "FR", "DE", "IT", "PT", "KO", "ZH"]);
 
-// Por si antes usaron IDs viejos en HTML (dl_tipo, dl_set, dl_anio). No rompemos, migramos.
+// Por si quedó HTML viejo en algún momento
 const LEGACY_DL_IDS = new Map([
   ["dl_tipo", "dlTipo"],
   ["dl_set", "dlSet"],
   ["dl_anio", "dlAnio"],
 ]);
 
-// Normaliza a texto amigable (para listas)
 function cleanListValue_(v) {
   return String(v ?? "").trim().replace(/\s+/g, " ");
 }
@@ -109,6 +105,7 @@ const state = {
   isOnline: navigator.onLine,
   lastLoadedAt: null,
   colIndex: {},   // { key: index } basado en header real
+  lastDrawerSnapshot: "", // para detectar cambios en el form
 };
 
 /* =========================
@@ -117,25 +114,23 @@ const state = {
 init();
 
 function init() {
-  setStatus(dom.statusDot, dom.statusText, state.isOnline ? "ok" : "error", state.isOnline ? "Online" : "Offline");
+  setStatus(
+    dom.statusDot,
+    dom.statusText,
+    state.isOnline ? "ok" : "error",
+    state.isOnline ? "Online" : "Offline"
+  );
 
-  // 1) refs base
   refreshFormRefs_();
-
-  // 2) por si el HTML no trae evolución (igual lo soportamos)
   ensureEvolutionFields_();
-
-  // 3) refresh otra vez (por si inyectamos inputs)
   refreshFormRefs_();
 
-  // 3.5) mask identidad
   bindIdentityMask_();
+  bindIdiomaUppercase_();
+  bindNumericCleanup_();
 
-  // 4) datalists (incluye idioma)
   ensureDatalists_();
-  seedIdiomaDefaults_(); // ✅ importantico
-
-  // 5) anti-duplicados (dialog ready)
+  seedIdiomaDefaults_();
   ensureDupDialog_();
 
   bindUI();
@@ -150,13 +145,13 @@ function refreshFormRefs_() {
     (Array.isArray(FORM_FIELDS) ? FORM_FIELDS : []).map((id) => [id, $(id)])
   );
 
-  // también por compat
+  // Compat extra por si algún HTML raro trae otros ids
   dom.f.evoluciona_de = $("evoluciona_de") || dom.f.evoluciona_de || null;
   dom.f.evoluciona_a  = $("evoluciona_a")  || dom.f.evoluciona_a  || null;
 }
 
 /* =========================
-   IDENTIDAD mask: "012/198"
+   Mask Identidad (#): "012/198"
 ========================= */
 function bindIdentityMask_() {
   const el = $("num");
@@ -209,7 +204,61 @@ function bindIdentityMask_() {
 }
 
 /* =========================
-   NETWORK listeners
+   Idioma uppercase
+========================= */
+function bindIdiomaUppercase_() {
+  const el = $("idioma");
+  if (!el) return;
+  if (el.dataset.upperBound === "1") return;
+  el.dataset.upperBound = "1";
+
+  const apply = () => {
+    const v = String(el.value || "").trim();
+    if (!v) return;
+    const up = v.toUpperCase();
+    if (up !== v) el.value = up;
+  };
+
+  el.addEventListener("blur", apply, { passive: true });
+  el.addEventListener("change", apply, { passive: true });
+}
+
+/* =========================
+   Numeric cleanup (hp, qty, price)
+========================= */
+function bindNumericCleanup_() {
+  const hp = $("nivel");
+  const qty = $("cantidad");
+  const price = $("precio");
+
+  const cleanInt = (el) => {
+    if (!el) return;
+    const v = String(el.value || "").trim();
+    if (!v) return;
+    const n = Math.trunc(Number(v.replace(/[^\d-]/g, "")));
+    if (Number.isFinite(n)) el.value = String(n);
+  };
+
+  const cleanNum = (el) => {
+    if (!el) return;
+    const v = String(el.value || "").trim();
+    if (!v) return;
+    // Permite coma decimal y quita símbolos
+    const normed = v
+      .replace(/\s+/g, "")
+      .replace(/[^0-9,.\-]/g, "")
+      .replace(",", ".");
+    const n = Number(normed);
+    if (Number.isFinite(n)) el.value = String(n);
+  };
+
+  hp?.addEventListener("blur", () => cleanInt(hp), { passive: true });
+  qty?.addEventListener("blur", () => cleanInt(qty), { passive: true });
+  price?.addEventListener("blur", () => cleanNum(price), { passive: true });
+}
+
+/* =========================
+   Network listeners
 ========================= */
 function bindNetwork() {
   window.addEventListener("online", () => {
@@ -246,25 +295,26 @@ function bindUI() {
   dom.btnReload?.addEventListener("click", () => loadTSV(true));
   dom.btnNew?.addEventListener("click", openNew);
 
-  dom.btnCloseDrawer?.addEventListener("click", closeDrawer);
-  dom.btnCancel?.addEventListener("click", closeDrawer);
-  dom.overlay?.addEventListener("click", closeDrawer);
+  dom.btnCloseDrawer?.addEventListener("click", guardedCloseDrawer_);
+  dom.btnCancel?.addEventListener("click", guardedCloseDrawer_);
+  dom.overlay?.addEventListener("click", guardedCloseDrawer_);
 
   dom.btnDuplicate?.addEventListener("click", duplicateSelected);
   dom.form?.addEventListener("submit", onSave);
 
   document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") closeDrawer();
+    if (e.key === "Escape") guardedCloseDrawer_();
 
     // shortcuts solo si no estás escribiendo
     const tag = (e.target?.tagName || "").toLowerCase();
     if (tag === "input" || tag === "textarea" || e.target?.isContentEditable) return;
 
-    if (e.key.toLowerCase() === "r") dom.btnReload?.click?.();
-    if (e.key.toLowerCase() === "n") dom.btnNew?.click?.();
+    const k = e.key.toLowerCase();
+    if (k === "r") dom.btnReload?.click?.();
+    if (k === "n") dom.btnNew?.click?.();
   });
 
-  // Delegación tabla: Editar por botón (data-action) o por fila
+  // Delegación tabla: Editar por botón o por fila
   dom.tbody?.addEventListener("click", (e) => {
     const btn = e.target?.closest?.("[data-action]");
     const tr = e.target?.closest?.("tr");
@@ -353,7 +403,7 @@ function applyRows(rows) {
 
   state.colIndex = buildColIndexFromHeader(state.header);
 
-  // listas TSV + storage (incluye idioma)
+  // listas TSV + storage
   refreshDatalistsFromData_();
 
   applyFiltersAndRender();
@@ -460,6 +510,7 @@ function resolveSheetRowIndexById(_id) {
   if (idIdx < 0) return "";
 
   const j = state.rows.findIndex((r, i) => i > 0 && String(r?.[idIdx] || "") === _id);
+  // +1 porque sheet es 1-index y +1 porque header ocupa fila 1 -> data empieza en fila 2
   return j >= 1 ? String(j + 1) : "";
 }
 
@@ -501,18 +552,58 @@ function openEdit(row, sheetRowIndex) {
 
 function openDrawer() {
   if (!dom.drawer) return;
+
   dom.drawer.classList.add("open");
   dom.drawer.setAttribute("aria-hidden", "false");
   if (dom.overlay) dom.overlay.hidden = false;
 
   bindIdentityMask_();
+  bindIdiomaUppercase_();
+
+  // snapshot para detectar cambios
+  state.lastDrawerSnapshot = snapshotForm_();
 }
 
 function closeDrawer() {
   if (!dom.drawer) return;
+
   dom.drawer.classList.remove("open");
   dom.drawer.setAttribute("aria-hidden", "true");
   if (dom.overlay) dom.overlay.hidden = true;
+
+  state.lastDrawerSnapshot = "";
+}
+
+function guardedCloseDrawer_() {
+  // Si no está abierto, nada
+  if (!dom.drawer?.classList.contains("open")) return;
+
+  // Si no hay snapshot, cerramos sin drama
+  if (!state.lastDrawerSnapshot) {
+    closeDrawer();
+    return;
+  }
+
+  // Si está guardando, ni lo intentes
+  if (state.isSaving) return;
+
+  const now = snapshotForm_();
+  if (now === state.lastDrawerSnapshot) {
+    closeDrawer();
+    return;
+  }
+
+  // Confirmación simple (sí, el confirm es feo, pero funciona y no rompe CSS)
+  const ok = window.confirm("Tienes cambios sin guardar. ¿Cerrar igual?");
+  if (ok) closeDrawer();
+}
+
+function snapshotForm_() {
+  const obj = {};
+  for (const id of (Array.isArray(FORM_FIELDS) ? FORM_FIELDS : [])) {
+    obj[id] = String(dom.f[id]?.value ?? "");
+  }
+  return JSON.stringify(obj);
 }
 
 function setFormMeta(msg) {
@@ -525,20 +616,20 @@ function clearFormFields() {
     const el = dom.f[id];
     if (el) el.value = "";
   }
-  if (dom.f.evoluciona_de) dom.f.evoluciona_de.value = "";
-  if (dom.f.evoluciona_a) dom.f.evoluciona_a.value = "";
 }
 
 function fillFormFromRow(row) {
-  for (const sheetKey of Object.keys(SHEET_TO_UI || {})) {
-    const uiId = SHEET_TO_UI[sheetKey];
+  // Map UI -> sheetKey (y luego sheetKey -> valor desde colIndex)
+  for (const uiId of Object.keys(UI_TO_SHEET || {})) {
+    if (uiId === "atk") continue; // por si heredado en algún lado
+    const sheetKey = UI_TO_SHEET[uiId];
     const el = dom.f[uiId];
     if (!el) continue;
     el.value = String(getCell(row, sheetKey) || "");
   }
 
-  if (dom.f.evoluciona_de) dom.f.evoluciona_de.value = String(getCell(row, "evoluciona_de") || "");
-  if (dom.f.evoluciona_a)  dom.f.evoluciona_a.value  = String(getCell(row, "evoluciona_a")  || "");
+  // Normalización suave
+  if (dom.f.idioma?.value) dom.f.idioma.value = String(dom.f.idioma.value).trim().toUpperCase();
 
   bindIdentityMask_();
 }
@@ -549,19 +640,11 @@ function val(id) {
 
 /* =========================
    DUPLICADOS (anti-repeat)
-   - Solo aplica cuando intentas "add"
-   - Detecta por fingerprint configurable
-   - Opciones: sumar cantidad / duplicar / descartar
 ========================= */
-
-// Define qué significa "misma carta" para ustedes.
-// Recomendación: si "num" suele venir, es lo más fuerte.
-// Si "num" a veces falta, "nombre+edicion+idioma" ayuda a no meter la pata.
 const DUP_KEYS = Object.freeze([
   "num",
   "edicion",
   "idioma",
-  // fallback suave (si el num viene vacío, el nombre ayuda)
   "nombre",
 ]);
 
@@ -592,9 +675,7 @@ function fingerprintFromRow_(row) {
 
 function findDuplicateRow_() {
   const fp = fingerprintFromForm_();
-
-  // si todo está vacío, no molestamos
-  if (!fp.replace(/\|/g, "")) return null;
+  if (!fp.replace(/\|/g, "")) return null; // todo vacío
 
   for (const row of (state.data || [])) {
     if (fingerprintFromRow_(row) === fp) return row;
@@ -608,7 +689,6 @@ function ensureDupDialog_() {
   const d = document.createElement("dialog");
   d.id = "dupDialog";
 
-  // Inline styles para que no dependa de CSS (porque humanos).
   d.style.padding = "0";
   d.style.border = "none";
   d.style.borderRadius = "16px";
@@ -677,13 +757,15 @@ function askDupAction_(dupRow) {
 }
 
 /* =========================
-   SAVE payload builder (PRO: data por header real)
+   SAVE payload builder (data por header real)
 ========================= */
 function buildDataForSave_() {
   const headerLen = (state.header || []).length || 0;
   if (!headerLen) throw new Error("No header loaded");
 
-  const existingId = state.selected?.rowArray ? String(getCell(state.selected.rowArray, "_id") || "") : "";
+  const existingId = state.selected?.rowArray
+    ? String(getCell(state.selected.rowArray, "_id") || "")
+    : "";
   const _id = existingId || makeId(CFG.ID_PREFIX);
 
   const data = {};
@@ -696,16 +778,19 @@ function buildDataForSave_() {
     data[headerName] = String(value ?? "").trim();
   };
 
+  // siempre setea ID si existe la columna
   setBySheetKey("_id", _id);
 
+  // mapea UI -> sheetKey
   for (const uiId of Object.keys(UI_TO_SHEET || {})) {
-    if (uiId === "atk") continue; // por si existe heredado
+    if (uiId === "atk") continue;
     const sheetKey = UI_TO_SHEET[uiId];
     setBySheetKey(sheetKey, val(uiId));
   }
 
-  if (dom.f.evoluciona_de) setBySheetKey("evoluciona_de", dom.f.evoluciona_de.value);
-  if (dom.f.evoluciona_a)  setBySheetKey("evoluciona_a",  dom.f.evoluciona_a.value);
+  // normalización extra
+  // idioma a mayúsculas si existe columna
+  if (val("idioma")) setBySheetKey("idioma", val("idioma").toUpperCase());
 
   return { _id, data };
 }
@@ -719,7 +804,7 @@ async function onSave(e) {
 
   const rowIndexRaw = (dom.rowIndex?.value || "").trim();
   const isEdit = Boolean(rowIndexRaw);
-  const action = isEdit ? "update" : "add";
+  let action = isEdit ? "update" : "add";
 
   const name = val("nombre");
   if (!name) {
@@ -793,7 +878,7 @@ async function onSave(e) {
         setFormMeta("Duplicada: sumando cantidad y actualizando.");
       }
 
-      // choice === "duplicate" -> seguimos normal como ADD
+      // choice === "duplicate" -> sigue como add
     }
   }
 
@@ -806,14 +891,14 @@ async function onSave(e) {
     return;
   }
 
-  // Antes de guardar: persistir listas (incluye idioma)
+  // Persistir listas antes de guardar
   try {
     persistListValue_("tipo", cleanListValue_(val("categoria")));
     persistListValue_("set", cleanListValue_(val("edicion")));
     persistListValue_("anio", cleanListValue_(val("anio")));
     persistListValue_("subtipo", cleanListValue_(val("subtipo")));
     persistListValue_("elemento", cleanListValue_(val("atributo")));
-    persistListValue_("idioma", cleanListValue_(val("idioma"))); // ✅ nuevo
+    persistListValue_("idioma", cleanListValue_(val("idioma")));
 
     ensureDatalists_();
     seedIdiomaDefaults_();
@@ -822,9 +907,9 @@ async function onSave(e) {
     // ok
   }
 
-  // Re-evaluamos rowIndex después del merge
+  // Re-evaluamos rowIndex después de merge
   const rowIndex = (dom.rowIndex?.value || "").trim();
-  const finalAction = rowIndex ? "update" : "add";
+  action = rowIndex ? "update" : "add";
 
   try {
     state.isSaving = true;
@@ -834,7 +919,7 @@ async function onSave(e) {
     setStatus(dom.statusDot, dom.statusText, "loading", "Guardando…");
 
     const payload = {
-      action: finalAction,
+      action,
       rowIndex: rowIndex || "",
       id: built._id,
       data: built.data,
@@ -850,7 +935,8 @@ async function onSave(e) {
     await loadTSV(true);
 
     // Si fue add real (no merge), cerramos
-    if (finalAction === "add") closeDrawer();
+    if (action === "add") closeDrawer();
+    else state.lastDrawerSnapshot = snapshotForm_(); // actualiza snapshot: ya guardó
   } catch (err) {
     console.error(err);
     toast("No se pudo guardar (conexión o bloqueo).", CFG.NET.toastMs);
@@ -936,10 +1022,10 @@ function ensureEvolutionFields_() {
 }
 
 /* =========================
-   DATALISTS (Tipo / Set / Año / Subtipo / Elemento / Idioma)
+   DATALISTS
 ========================= */
 function ensureDatalists_() {
-  // Migra datalist IDs viejos si existen (solo en DOM, por si quedó HTML mezclado)
+  // Migra datalist IDs viejos si existen
   for (const [legacyId, newId] of LEGACY_DL_IDS.entries()) {
     const legacy = $(legacyId);
     if (legacy && !$(newId)) legacy.id = newId;
@@ -956,7 +1042,7 @@ function ensureDatalists_() {
     if (!dl) {
       dl = document.createElement("datalist");
       dl.id = cfg.dlId;
-      host.prepend(dl); // queda “cerca” de la app y no regado por el body
+      host.prepend(dl);
     }
 
     input.setAttribute("list", cfg.dlId);
@@ -973,7 +1059,7 @@ function refreshDatalistsFromStorage_() {
 
     const values = readList_(cfg.lsKey);
 
-    // ✅ Si no hay valores guardados, NO borres los <option> que ya venían en el HTML
+    // Si no hay valores guardados, no borres <option> preexistentes en HTML
     if (!values.length && dl.children.length) continue;
 
     dl.replaceChildren(
@@ -987,7 +1073,6 @@ function refreshDatalistsFromStorage_() {
 }
 
 function refreshDatalistsFromData_() {
-  // TSV + localStorage (incluye idioma)
   const next = {
     tipo: new Set(readList_(LISTS.tipo.lsKey)),
     set: new Set(readList_(LISTS.set.lsKey)),
@@ -997,7 +1082,6 @@ function refreshDatalistsFromData_() {
     idioma: new Set(readList_(LISTS.idioma.lsKey)),
   };
 
-  // ✅ seed defaults idioma siempre
   for (const d of DEFAULT_IDIOMAS) next.idioma.add(d);
 
   for (const row of (state.data || [])) {
@@ -1033,10 +1117,10 @@ function refreshDatalistsFromData_() {
 function persistListValue_(listKey, value) {
   const cfg = LISTS[listKey];
   if (!cfg) return;
+
   let v = cleanListValue_(value);
   if (!v) return;
 
-  // Idioma siempre en mayúsculas (ES/EN/JP)
   if (listKey === "idioma") v = v.toUpperCase();
 
   const arr = readList_(cfg.lsKey);
@@ -1051,7 +1135,7 @@ function persistListValue_(listKey, value) {
 }
 
 /* =========================
-   Idioma defaults (sin borrar lo que ya exista)
+   Idioma defaults
 ========================= */
 function seedIdiomaDefaults_() {
   const cfg = LISTS.idioma;
@@ -1059,7 +1143,6 @@ function seedIdiomaDefaults_() {
 
   const current = new Set(readList_(cfg.lsKey).map((x) => x.toUpperCase()));
 
-  // Si el HTML trae options, también los incorporamos
   const dl = $(cfg.dlId);
   if (dl) {
     for (const opt of Array.from(dl.querySelectorAll("option"))) {

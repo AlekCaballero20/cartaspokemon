@@ -13,7 +13,11 @@
   <meta name="format-detection" content="telephone=no" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
 
-  <!-- Social (opcional pero fino) -->
+  <!-- iOS / PWA-ish -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+
+  <!-- Social -->
   <meta property="og:title" content="Pokémon TCG Database" />
   <meta property="og:description" content="Organiza, busca y edita tu colección TCG (TSV + Apps Script)." />
   <meta property="og:type" content="website" />
@@ -25,12 +29,15 @@
   <!-- Preload hero image (siempre visible arriba) -->
   <link rel="preload" as="image" href="./pokemon.webp" imagesrcset="./pokemon.webp" />
 
-  <!-- PWA (si no tienes estos archivos aún, bórralos o créalos para evitar 404 en consola) -->
+  <!-- PWA -->
   <link rel="manifest" href="./manifest.webmanifest" />
 
-  <!-- Iconos -->
-  <link rel="icon" href="./assets/icon-192.png" sizes="192x192" />
-  <link rel="apple-touch-icon" href="./assets/icon-192.png" />
+  <!-- Iconos (✅ corregido: en tu estructura están en /icons, no /assets) -->
+  <link rel="icon" href="./icons/icon-192.png" sizes="192x192" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="icon" type="image/png" href="./icons/icon-512.png" sizes="512x512" />
+
+  <!-- Favicon SVG inline (fallback elegante) -->
   <link
     rel="icon"
     type="image/svg+xml"
@@ -63,7 +70,7 @@
     <datalist id="dlSubtipo"></datalist>
     <datalist id="dlElemento"></datalist>
 
-    <!-- ✅ Idioma (lista sencilla, flexible) -->
+    <!-- Idioma (lista sencilla, flexible) -->
     <datalist id="dlIdioma">
       <option value="ES"></option>
       <option value="EN"></option>
@@ -247,8 +254,6 @@
                 <input id="nivel" type="number" inputmode="numeric" min="0" max="999" placeholder="Ej: 90" />
               </label>
 
-              <!-- (Quitado) EnergíaCoste / atk -->
-
               <!-- legacy oculto para compatibilidad -->
               <label class="field" style="display:none">
                 <span class="label">DEF (legacy)</span>
@@ -361,5 +366,45 @@
 
   <!-- ✅ CLAVE: app.js ES MÓDULO -->
   <script type="module" src="./app.js"></script>
+
+  <!-- ✅ CLAVE 2: Service Worker (para que la app instalada se actualice de verdad) -->
+  <script>
+    (function () {
+      if (!("serviceWorker" in navigator)) return;
+
+      window.addEventListener("load", async () => {
+        try {
+          const reg = await navigator.serviceWorker.register("./service-worker.js");
+
+          // Si hay uno esperando, lo activamos ya
+          if (reg.waiting) {
+            reg.waiting.postMessage({ type: "SKIP_WAITING" });
+          }
+
+          // Si se instala uno nuevo, intentamos activarlo rápido
+          reg.addEventListener("updatefound", () => {
+            const nw = reg.installing;
+            if (!nw) return;
+
+            nw.addEventListener("statechange", () => {
+              if (nw.state === "installed" && navigator.serviceWorker.controller) {
+                reg.waiting?.postMessage({ type: "SKIP_WAITING" });
+              }
+            });
+          });
+
+          // Cuando el nuevo SW toma control, recargamos para ver lo nuevo
+          let refreshing = false;
+          navigator.serviceWorker.addEventListener("controllerchange", () => {
+            if (refreshing) return;
+            refreshing = true;
+            window.location.reload();
+          });
+        } catch {
+          // Si falla, no rompemos la app. (Qué ternura, ¿no?)
+        }
+      });
+    })();
+  </script>
 </body>
 </html>
