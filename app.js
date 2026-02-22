@@ -1,15 +1,16 @@
 /* ============================
-   Pokémon TCG DB — app.js (PRO Modular vNext)
+   Pokémon TCG DB — app.js (PRO Modular vNext · improved)
    - Entry module (index.html usa: <script type="module" src="./app.js"></script>)
    - Lee TSV publicado (GET)
    - Escribe a Apps Script (POST sin preflight)
    - Mapeo robusto por headers (aliases)
    - UI: tabla compacta + drawer + form
    - Cache TSV + fallback offline
-   - ✅ Datalists (Tipo/Set/Año) persistentes
+   - ✅ Datalists persistentes: Tipo/Set/Año/Subtipo/Elemento/Idioma (TSV + localStorage + defaults)
    - ✅ Evolución (EvolucionaDe / EvolucionaA) con inyección si falta en HTML
    - ✅ No envía EnergíaCoste / atk
    - ✅ Mask Identidad (#): auto "/" (Ej: 012/198)
+   - ✅ Click en botón Editar o en la fila
 ============================ */
 
 "use strict";
@@ -31,6 +32,7 @@ const qs = (sel, root = document) => root.querySelector(sel);
    DOM refs
 ========================= */
 const dom = {
+  app: $("app"),
   tbody: qs("#dbTable tbody"),
   search: $("search"),
   btnClearSearch: $("btnClearSearch"),
@@ -59,12 +61,28 @@ const dom = {
 
 /* =========================
    LISTS (datalist) + storage
+   OJO: IDs deben coincidir con index.html
 ========================= */
 const LISTS = {
-  tipo: { inputId: "categoria", dlId: "dl_tipo", lsKey: "pkm_list_tipo_v1" },
-  set:  { inputId: "edicion",   dlId: "dl_set",  lsKey: "pkm_list_set_v1"  },
-  anio: { inputId: "anio",      dlId: "dl_anio", lsKey: "pkm_list_anio_v1" },
+  tipo:     { inputId: "categoria", dlId: "dlTipo",     lsKey: "pkm_list_tipo_v1" },
+  subtipo:  { inputId: "subtipo",   dlId: "dlSubtipo",  lsKey: "pkm_list_subtipo_v1" },
+  set:      { inputId: "edicion",   dlId: "dlSet",      lsKey: "pkm_list_set_v1" },
+  anio:     { inputId: "anio",      dlId: "dlAnio",     lsKey: "pkm_list_anio_v1" },
+  elemento: { inputId: "atributo",  dlId: "dlElemento", lsKey: "pkm_list_elemento_v1" },
+
+  // ✅ NUEVO: Idioma como lista persistente
+  idioma:   { inputId: "idioma",    dlId: "dlIdioma",   lsKey: "pkm_list_idioma_v1" },
 };
+
+// Defaults mínimos para Idioma (por si el TSV viene pelado o el storage está vacío)
+const DEFAULT_IDIOMAS = Object.freeze(["ES", "EN", "JP", "FR", "DE", "IT", "PT", "KO", "ZH"]);
+
+// Por si antes usaron IDs viejos en HTML (dl_tipo, dl_set, dl_anio). No rompemos, migramos.
+const LEGACY_DL_IDS = new Map([
+  ["dl_tipo", "dlTipo"],
+  ["dl_set", "dlSet"],
+  ["dl_anio", "dlAnio"],
+]);
 
 // Normaliza a texto amigable (para listas)
 function cleanListValue_(v) {
@@ -93,58 +111,51 @@ const state = {
 init();
 
 function init() {
-  // estado inicial (por si arranca offline)
   setStatus(dom.statusDot, dom.statusText, state.isOnline ? "ok" : "error", state.isOnline ? "Online" : "Offline");
 
-  // (1) asegura inputs base (por si FORM_FIELDS cambió)
+  // 1) refs base
   refreshFormRefs_();
 
-  // (2) asegura campos de evolución (sin obligarte a tocar HTML)
+  // 2) por si el HTML no trae evolución (igual lo soportamos)
   ensureEvolutionFields_();
 
-  // (3) refresh refs otra vez (porque quizá inyectamos inputs)
+  // 3) refresh otra vez (por si inyectamos inputs)
   refreshFormRefs_();
 
-  // (3.5) mask IDENTIDAD (#): auto "/" (input id="num")
+  // 3.5) mask identidad
   bindIdentityMask_();
 
-  // (4) datalists (Tipo/Set/Año)
+  // 4) datalists (incluye idioma)
   ensureDatalists_();
+  seedIdiomaDefaults_(); // ✅ importantico
 
   bindUI();
   bindNetwork();
 
-  // muestra skeleton al inicio si existe renderSkeleton
   safeRenderSkeleton_();
-
   loadTSV(false);
 }
 
 function refreshFormRefs_() {
-  // Construye dom.f según FORM_FIELDS, pero tolera que algunos no existan
   dom.f = Object.fromEntries(
-    (Array.isArray(FORM_FIELDS) ? FORM_FIELDS : [])
-      .map((id) => [id, $(id)])
+    (Array.isArray(FORM_FIELDS) ? FORM_FIELDS : []).map((id) => [id, $(id)])
   );
 
-  // También indexa evoluciona_* si existen/inyectamos
+  // también por compat
   dom.f.evoluciona_de = $("evoluciona_de") || dom.f.evoluciona_de || null;
   dom.f.evoluciona_a  = $("evoluciona_a")  || dom.f.evoluciona_a  || null;
 }
 
 /* =========================
    IDENTIDAD mask: "012/198"
-   - Solo dígitos
-   - Inserta "/" tras 3 dígitos
-   - Mantiene cursor decente
 ========================= */
 function bindIdentityMask_() {
   const el = $("num");
   if (!el) return;
-  if (el.dataset.maskBound === "1") return; // evita doble bind
+  if (el.dataset.maskBound === "1") return;
   el.dataset.maskBound = "1";
 
-  const MAX_DIGITS = 6;   // 3 + 3 (ajústalo si quieres 4/4 etc.)
+  const MAX_DIGITS = 6; // 3+3
   const SPLIT_AT = 3;
 
   const format = (digits) => {
@@ -179,16 +190,12 @@ function bindIdentityMask_() {
     if (next !== prev) {
       el.value = next;
       const caret = caretFromDigitsCount(next, digitBefore);
-      try { el.setSelectionRange(caret, caret); } catch { /* móvil, a veces no deja */ }
+      try { el.setSelectionRange(caret, caret); } catch { /* mobile */ }
     }
   };
 
   el.addEventListener("input", apply, { passive: true });
-
-  // si el usuario pega "012198" o "012/198", queda bien
   el.addEventListener("paste", () => setTimeout(apply, 0));
-
-  // opcional: al enfocar, si está vacío, no metemos "/" de una (solo cuando haya dígitos)
   el.addEventListener("focus", apply, { passive: true });
 }
 
@@ -240,16 +247,25 @@ function bindUI() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") closeDrawer();
 
-    // mini shortcuts (sin ser cansones)
-    if ((e.target?.tagName || "").toLowerCase() === "input" || (e.target?.tagName || "").toLowerCase() === "textarea") return;
+    // shortcuts solo si no estás escribiendo
+    const tag = (e.target?.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || e.target?.isContentEditable) return;
+
     if (e.key.toLowerCase() === "r") dom.btnReload?.click?.();
     if (e.key.toLowerCase() === "n") dom.btnNew?.click?.();
   });
 
-  // Delegación tabla: editar por botón o fila
+  // Delegación tabla: Editar por botón (data-action) o por fila
   dom.tbody?.addEventListener("click", (e) => {
+    const btn = e.target?.closest?.("[data-action]");
     const tr = e.target?.closest?.("tr");
     if (!tr) return;
+
+    // Si hay botón de acción, solo respondemos a "edit"
+    if (btn) {
+      const action = String(btn.getAttribute("data-action") || "");
+      if (action !== "edit") return;
+    }
 
     const id = tr.dataset.id || "";
     if (!id) return;
@@ -269,7 +285,7 @@ async function loadTSV(bypassCache = false) {
   setStatus(dom.statusDot, dom.statusText, "loading", "Cargando…");
   safeRenderSkeleton_();
 
-  // 1) intenta red
+  // 1) red
   try {
     const text = await fetchTSVText(CFG.TSV_URL, CFG.NET.fetchTimeoutMs, bypassCache);
     const rows = parseTSV(text);
@@ -284,7 +300,7 @@ async function loadTSV(bypassCache = false) {
     console.warn("TSV fetch failed:", err);
   }
 
-  // 2) fallback cache
+  // 2) cache
   const cached = getCachedTSV();
   if (cached) {
     try {
@@ -316,7 +332,7 @@ function safeRenderSkeleton_() {
       renderCount(dom.countText, 0);
     }
   } catch {
-    // si ui.render.js no trae renderSkeleton, no pasa nada
+    // ok
   }
 }
 
@@ -328,7 +344,7 @@ function applyRows(rows) {
 
   state.colIndex = buildColIndexFromHeader(state.header);
 
-  // actualiza datalists desde TSV + localStorage
+  // listas TSV + storage (incluye idioma)
   refreshDatalistsFromData_();
 
   applyFiltersAndRender();
@@ -357,16 +373,13 @@ function cacheTSV(tsvText) {
     localStorage.setItem(CFG.STORAGE.tsvCache, tsvText);
     localStorage.setItem(CFG.STORAGE.tsvCacheAt, String(Date.now()));
   } catch {
-    // storage bloqueado: seguimos sin drama
+    // ok
   }
 }
 
 function getCachedTSV() {
-  try {
-    return localStorage.getItem(CFG.STORAGE.tsvCache) || "";
-  } catch {
-    return "";
-  }
+  try { return localStorage.getItem(CFG.STORAGE.tsvCache) || ""; }
+  catch { return ""; }
 }
 
 function getCachedTSVAt() {
@@ -389,14 +402,14 @@ function buildColIndexFromHeader(header) {
     const aliases = (HEADER_ALIASES[key] || []).map((a) => norm(a));
     let idxFound = -1;
 
-    // exact match
+    // exact
     for (let i = 0; i < normHeader.length; i++) {
       const h = normHeader[i];
       if (!h) continue;
       if (aliases.includes(h)) { idxFound = i; break; }
     }
 
-    // contains match
+    // contains
     if (idxFound === -1) {
       for (let i = 0; i < normHeader.length; i++) {
         const h = normHeader[i];
@@ -408,9 +421,7 @@ function buildColIndexFromHeader(header) {
     if (idxFound !== -1) out[key] = idxFound;
   }
 
-  // compat: si no encuentra _id, asumimos col 0 si parece ser id
   if (out._id == null && (header?.[0] || "").trim()) out._id = 0;
-
   return out;
 }
 
@@ -440,7 +451,6 @@ function resolveSheetRowIndexById(_id) {
   if (idIdx < 0) return "";
 
   const j = state.rows.findIndex((r, i) => i > 0 && String(r?.[idIdx] || "") === _id);
-  // state.rows incluye header en index 0, y Sheets es 1-based: por eso +1
   return j >= 1 ? j + 1 : "";
 }
 
@@ -460,7 +470,6 @@ function openNew() {
 
   setFormMeta("Nueva carta.");
   openDrawer();
-
   dom.f.nombre?.focus?.();
 }
 
@@ -487,7 +496,6 @@ function openDrawer() {
   dom.drawer.setAttribute("aria-hidden", "false");
   if (dom.overlay) dom.overlay.hidden = false;
 
-  // por si el drawer crea/rehidrata inputs en algún futuro
   bindIdentityMask_();
 }
 
@@ -504,18 +512,15 @@ function setFormMeta(msg) {
 }
 
 function clearFormFields() {
-  // limpia los campos de FORM_FIELDS existentes
   for (const id of (Array.isArray(FORM_FIELDS) ? FORM_FIELDS : [])) {
     const el = dom.f[id];
     if (el) el.value = "";
   }
-  // limpia evolución si existe
   if (dom.f.evoluciona_de) dom.f.evoluciona_de.value = "";
   if (dom.f.evoluciona_a) dom.f.evoluciona_a.value = "";
 }
 
 function fillFormFromRow(row) {
-  // Sheet->UI mapping
   for (const sheetKey of Object.keys(SHEET_TO_UI || {})) {
     const uiId = SHEET_TO_UI[sheetKey];
     const el = dom.f[uiId];
@@ -523,11 +528,9 @@ function fillFormFromRow(row) {
     el.value = String(getCell(row, sheetKey) || "");
   }
 
-  // Evolución (por si tu schema lo maneja aparte)
   if (dom.f.evoluciona_de) dom.f.evoluciona_de.value = String(getCell(row, "evoluciona_de") || "");
   if (dom.f.evoluciona_a)  dom.f.evoluciona_a.value  = String(getCell(row, "evoluciona_a")  || "");
 
-  // aplica formato identidad al cargar (por si viene raro desde sheet)
   bindIdentityMask_();
 }
 
@@ -538,17 +541,6 @@ function val(id) {
 /* =========================
    SAVE payload builder (PRO: data por header real)
 ========================= */
-
-/**
- * Construye payload.data usando los headers reales del Sheet.
- * Así NO dependes del orden de columnas ni de nombres “canónicos”.
- *
- * Devuelve:
- * {
- *   _id: "...",
- *   data: { "Nombre": "Pikachu", "Set": "SV", ... }
- * }
- */
 function buildDataForSave_() {
   const headerLen = (state.header || []).length || 0;
   if (!headerLen) throw new Error("No header loaded");
@@ -566,17 +558,14 @@ function buildDataForSave_() {
     data[headerName] = String(value ?? "").trim();
   };
 
-  // _id
   setBySheetKey("_id", _id);
 
-  // UI -> Sheet mapping (pero OJO: ignora campos que ya quitaste como atk)
   for (const uiId of Object.keys(UI_TO_SHEET || {})) {
-    if (uiId === "atk") continue; // EnergíaCoste fuera ✅
+    if (uiId === "atk") continue; // por si existe heredado
     const sheetKey = UI_TO_SHEET[uiId];
     setBySheetKey(sheetKey, val(uiId));
   }
 
-  // Evolución (si existen columnas)
   if (dom.f.evoluciona_de) setBySheetKey("evoluciona_de", dom.f.evoluciona_de.value);
   if (dom.f.evoluciona_a)  setBySheetKey("evoluciona_a",  dom.f.evoluciona_a.value);
 
@@ -593,7 +582,6 @@ async function onSave(e) {
   const rowIndex = (dom.rowIndex?.value || "").trim();
   const action = rowIndex ? "update" : "add";
 
-  // Validaciones básicas
   const name = val("nombre");
   if (!name) {
     toast("Falta el nombre.", CFG.NET.toastMs);
@@ -637,16 +625,20 @@ async function onSave(e) {
     return;
   }
 
-  // Antes de guardar: mete valores a datalists y persiste
+  // Antes de guardar: persistir listas (incluye idioma)
   try {
     persistListValue_("tipo", cleanListValue_(val("categoria")));
-    persistListValue_("set",  cleanListValue_(val("edicion")));
+    persistListValue_("set", cleanListValue_(val("edicion")));
     persistListValue_("anio", cleanListValue_(val("anio")));
-    // refresca datalists visuales
+    persistListValue_("subtipo", cleanListValue_(val("subtipo")));
+    persistListValue_("elemento", cleanListValue_(val("atributo")));
+    persistListValue_("idioma", cleanListValue_(val("idioma"))); // ✅ nuevo
+
     ensureDatalists_();
+    seedIdiomaDefaults_();
     refreshDatalistsFromStorage_();
   } catch {
-    // si storage está bloqueado, meh
+    // ok
   }
 
   try {
@@ -656,7 +648,6 @@ async function onSave(e) {
     setFormMeta("Guardando…");
     setStatus(dom.statusDot, dom.statusText, "loading", "Guardando…");
 
-    // Payload PRO (data object)
     const payload = {
       action,
       rowIndex: rowIndex || "",
@@ -671,10 +662,8 @@ async function onSave(e) {
     setFormMeta("Listo.");
     setStatus(dom.statusDot, dom.statusText, "ok", "Listo");
 
-    // refresca TSV
     await loadTSV(true);
 
-    // UX: si fue add, cerramos
     if (action === "add") closeDrawer();
   } catch (err) {
     console.error(err);
@@ -710,7 +699,6 @@ function duplicateSelected() {
   dom.drawerSubtitle && (dom.drawerSubtitle.textContent = "Se guardará como nueva");
   dom.rowIndex && (dom.rowIndex.value = "");
 
-  // deja inputs como están, pero fuerza “nuevo” quitando selected (así genera _id nuevo)
   state.selected = null;
   if (dom.btnDuplicate) dom.btnDuplicate.disabled = true;
 
@@ -721,15 +709,12 @@ function duplicateSelected() {
 /* =========================
    EVOLUCIÓN: inyección si no existe en HTML
 ========================= */
-
 function ensureEvolutionFields_() {
-  // si ya existen, listo
   if ($("evoluciona_de") && $("evoluciona_a")) return;
 
   const form = dom.form;
   if (!form) return;
 
-  // buscamos una sección para insertar: justo antes de "Inventario" (si existe)
   const sections = Array.from(form.querySelectorAll(".form-section"));
   let insertBefore = null;
   for (const s of sections) {
@@ -742,13 +727,13 @@ function ensureEvolutionFields_() {
   sec.innerHTML = `
     <div class="section-title">Evolución</div>
     <div class="grid">
-      <label class="field">
+      <label class="field span-2">
         <span class="label">Evoluciona de</span>
         <input id="evoluciona_de" type="text" placeholder="Ej: Pichu / Charmander / Eevee…" />
         <span class="hint">¿De quién evoluciona esta carta? (si aplica)</span>
       </label>
 
-      <label class="field">
+      <label class="field span-2">
         <span class="label">Evoluciona a</span>
         <input id="evoluciona_a" type="text" placeholder="Ej: Raichu / Charmeleon / Vaporeon…" />
         <span class="hint">¿A quién evoluciona? (si aplica)</span>
@@ -756,10 +741,8 @@ function ensureEvolutionFields_() {
     </div>
   `;
 
-  if (insertBefore) {
-    form.insertBefore(sec, insertBefore);
-  } else {
-    // fallback: al final, antes del footer
+  if (insertBefore) form.insertBefore(sec, insertBefore);
+  else {
     const foot = form.querySelector(".drawer-foot");
     if (foot) form.insertBefore(sec, foot);
     else form.appendChild(sec);
@@ -767,11 +750,17 @@ function ensureEvolutionFields_() {
 }
 
 /* =========================
-   DATALISTS (Tipo / Set / Año)
+   DATALISTS (Tipo / Set / Año / Subtipo / Elemento / Idioma)
 ========================= */
-
 function ensureDatalists_() {
-  // crea datalist si no existe y lo asocia al input
+  // Migra datalist IDs viejos si existen (solo en DOM, por si quedó HTML mezclado)
+  for (const [legacyId, newId] of LEGACY_DL_IDS.entries()) {
+    const legacy = $(legacyId);
+    if (legacy && !$(newId)) legacy.id = newId;
+  }
+
+  const host = dom.app || document.body;
+
   for (const key of Object.keys(LISTS)) {
     const cfg = LISTS[key];
     const input = $(cfg.inputId);
@@ -781,13 +770,12 @@ function ensureDatalists_() {
     if (!dl) {
       dl = document.createElement("datalist");
       dl.id = cfg.dlId;
-      document.body.appendChild(dl);
+      host.prepend(dl); // queda “cerca” de la app y no regado por el body
     }
 
     input.setAttribute("list", cfg.dlId);
   }
 
-  // rellena desde storage (rápido) para que aparezcan aunque estés offline
   refreshDatalistsFromStorage_();
 }
 
@@ -798,61 +786,107 @@ function refreshDatalistsFromStorage_() {
     if (!dl) continue;
 
     const values = readList_(cfg.lsKey);
-    dl.replaceChildren(...values.map((v) => {
-      const opt = document.createElement("option");
-      opt.value = v;
-      return opt;
-    }));
+
+    // ✅ Si no hay valores guardados, NO borres los <option> que ya venían en el HTML
+    if (!values.length && dl.children.length) continue;
+
+    dl.replaceChildren(
+      ...values.map((v) => {
+        const opt = document.createElement("option");
+        opt.value = v;
+        return opt;
+      })
+    );
   }
 }
 
 function refreshDatalistsFromData_() {
-  // Mezcla: valores desde TSV + lo que haya en localStorage
+  // TSV + localStorage (incluye idioma)
   const next = {
     tipo: new Set(readList_(LISTS.tipo.lsKey)),
-    set:  new Set(readList_(LISTS.set.lsKey)),
+    set: new Set(readList_(LISTS.set.lsKey)),
     anio: new Set(readList_(LISTS.anio.lsKey)),
+    subtipo: new Set(readList_(LISTS.subtipo.lsKey)),
+    elemento: new Set(readList_(LISTS.elemento.lsKey)),
+    idioma: new Set(readList_(LISTS.idioma.lsKey)),
   };
 
-  // extrae desde TSV usando colIndex (si existen las columnas)
+  // ✅ seed defaults idioma siempre
+  for (const d of DEFAULT_IDIOMAS) next.idioma.add(d);
+
   for (const row of (state.data || [])) {
-    // tipo
     const t = cleanListValue_(getCell(row, "tipo"));
     if (t) next.tipo.add(t);
 
-    // set
     const s = cleanListValue_(getCell(row, "edicion"));
     if (s) next.set.add(s);
 
-    // año
     const a = cleanListValue_(getCell(row, "anio"));
     if (a) next.anio.add(a);
+
+    const st = cleanListValue_(getCell(row, "subtipo"));
+    if (st) next.subtipo.add(st);
+
+    const el = cleanListValue_(getCell(row, "atributo"));
+    if (el) next.elemento.add(el);
+
+    const lang = cleanListValue_(getCell(row, "idioma"));
+    if (lang) next.idioma.add(lang.toUpperCase());
   }
 
-  // guarda listas limpias (ordenadas)
   writeList_(LISTS.tipo.lsKey, Array.from(next.tipo).sort(localeSort_));
-  writeList_(LISTS.set.lsKey,  Array.from(next.set).sort(localeSort_));
+  writeList_(LISTS.set.lsKey, Array.from(next.set).sort(localeSort_));
   writeList_(LISTS.anio.lsKey, Array.from(next.anio).sort(localeSortNum_));
+  writeList_(LISTS.subtipo.lsKey, Array.from(next.subtipo).sort(localeSort_));
+  writeList_(LISTS.elemento.lsKey, Array.from(next.elemento).sort(localeSort_));
+  writeList_(LISTS.idioma.lsKey, Array.from(next.idioma).sort(localeSort_));
 
-  // y pinta datalists
   refreshDatalistsFromStorage_();
 }
 
 function persistListValue_(listKey, value) {
   const cfg = LISTS[listKey];
   if (!cfg) return;
-  const v = cleanListValue_(value);
+  let v = cleanListValue_(value);
   if (!v) return;
+
+  // Idioma siempre en mayúsculas (ES/EN/JP)
+  if (listKey === "idioma") v = v.toUpperCase();
 
   const arr = readList_(cfg.lsKey);
   if (arr.some((x) => norm(x) === norm(v))) return;
 
   arr.push(v);
-  // tipo y set alfabético, año numérico
+
   if (listKey === "anio") arr.sort(localeSortNum_);
   else arr.sort(localeSort_);
 
   writeList_(cfg.lsKey, arr);
+}
+
+/* =========================
+   Idioma defaults (sin borrar lo que ya exista)
+========================= */
+function seedIdiomaDefaults_() {
+  const cfg = LISTS.idioma;
+  if (!cfg) return;
+
+  const current = new Set(readList_(cfg.lsKey).map((x) => x.toUpperCase()));
+
+  // Si el HTML trae options, también los incorporamos
+  const dl = $(cfg.dlId);
+  if (dl) {
+    for (const opt of Array.from(dl.querySelectorAll("option"))) {
+      const v = cleanListValue_(opt.value).toUpperCase();
+      if (v) current.add(v);
+    }
+  }
+
+  for (const d of DEFAULT_IDIOMAS) current.add(d);
+
+  const finalArr = Array.from(current).sort(localeSort_);
+  writeList_(cfg.lsKey, finalArr);
+  refreshDatalistsFromStorage_();
 }
 
 function readList_(lsKey) {
@@ -869,7 +903,7 @@ function writeList_(lsKey, arr) {
   try {
     localStorage.setItem(lsKey, JSON.stringify(Array.isArray(arr) ? arr : []));
   } catch {
-    // storage bloqueado, no pasa nada
+    // ok
   }
 }
 

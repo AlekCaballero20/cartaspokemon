@@ -13,6 +13,11 @@
   <meta name="format-detection" content="telephone=no" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
 
+  <!-- Social (opcional pero fino) -->
+  <meta property="og:title" content="Pokémon TCG Database" />
+  <meta property="og:description" content="Organiza, busca y edita tu colección TCG (TSV + Apps Script)." />
+  <meta property="og:type" content="website" />
+
   <!-- Performance hints (TSV + Apps Script) -->
   <link rel="preconnect" href="https://script.google.com" crossorigin />
   <link rel="preconnect" href="https://docs.google.com" crossorigin />
@@ -26,27 +31,24 @@
   <!-- Iconos -->
   <link rel="icon" href="./assets/icon-192.png" sizes="192x192" />
   <link rel="apple-touch-icon" href="./assets/icon-192.png" />
-  <link rel="icon"
-        type="image/svg+xml"
-        href='data:image/svg+xml;utf8,
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
-          <defs>
-            <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="%23e92b2b"/>
-              <stop offset="1" stop-color="%231fb6ff"/>
-            </linearGradient>
-          </defs>
-          <rect width="128" height="128" rx="28" fill="url(%23g)"/>
-          <circle cx="46" cy="44" r="18" fill="white" fill-opacity=".35"/>
-          <circle cx="78" cy="78" r="28" fill="white" fill-opacity=".20"/>
-        </svg>' />
+  <link
+    rel="icon"
+    type="image/svg+xml"
+    href='data:image/svg+xml;utf8,
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="%23e92b2b"/>
+          <stop offset="1" stop-color="%231fb6ff"/>
+        </linearGradient>
+      </defs>
+      <rect width="128" height="128" rx="28" fill="url(%23g)"/>
+      <circle cx="46" cy="44" r="18" fill="white" fill-opacity=".35"/>
+      <circle cx="78" cy="78" r="28" fill="white" fill-opacity=".20"/>
+    </svg>'
+  />
 
   <link rel="stylesheet" href="./styles.css" />
-
-  <!-- Social (opcional pero fino) -->
-  <meta property="og:title" content="Pokémon TCG Database" />
-  <meta property="og:description" content="Organiza, busca y edita tu colección TCG (TSV + Apps Script)." />
-  <meta property="og:type" content="website" />
 </head>
 
 <body>
@@ -60,6 +62,19 @@
     <datalist id="dlTipo"></datalist>
     <datalist id="dlSubtipo"></datalist>
     <datalist id="dlElemento"></datalist>
+
+    <!-- ✅ Idioma (lista sencilla, flexible) -->
+    <datalist id="dlIdioma">
+      <option value="ES"></option>
+      <option value="EN"></option>
+      <option value="JP"></option>
+      <option value="FR"></option>
+      <option value="DE"></option>
+      <option value="IT"></option>
+      <option value="PT"></option>
+      <option value="KO"></option>
+      <option value="ZH"></option>
+    </datalist>
 
     <!-- Topbar -->
     <header class="topbar" role="banner">
@@ -119,6 +134,7 @@
           spellcheck="false"
           placeholder="Buscar por Nombre, Set, #, Tipo, Subtipo, Elemento, Evolución…"
           aria-label="Buscar cartas"
+          enterkeyhint="search"
         />
         <button class="btn ghost" id="btnClearSearch" type="button" title="Limpiar búsqueda">Limpiar</button>
       </div>
@@ -157,7 +173,7 @@
     <div class="overlay" id="overlay" hidden></div>
 
     <!-- Drawer -->
-    <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Editor de carta">
+    <aside class="drawer" id="drawer" aria-hidden="true" aria-label="Editor de carta" role="dialog" aria-modal="true">
       <header class="drawer-head">
         <div class="drawer-titles">
           <div class="drawer-title" id="drawerTitle">Nueva carta</div>
@@ -171,59 +187,59 @@
       </header>
 
       <div class="drawer-body">
-        <form id="cardForm" class="form" autocomplete="off">
+        <form id="cardForm" class="form" autocomplete="off" novalidate>
           <input id="rowIndex" type="hidden" />
           <div class="form-meta" id="formMeta" aria-live="polite"></div>
 
           <!-- Identidad -->
-          <section class="form-section">
+          <section class="form-section" aria-label="Identidad">
             <div class="section-title">Identidad</div>
             <div class="grid">
               <label class="field">
                 <span class="label">#</span>
-                <input id="num" type="text" inputmode="numeric" placeholder="Ej: 012/198" />
-                <span class="hint">Número dentro del set (si aplica).</span>
+                <input id="num" type="text" inputmode="numeric" placeholder="Ej: 012/198" aria-describedby="hint-num" />
+                <span class="hint" id="hint-num">Número dentro del set (si aplica).</span>
               </label>
 
               <label class="field">
                 <span class="label">Set</span>
-                <input id="edicion" type="text" list="dlSet" placeholder="Ej: Scarlet &amp; Violet" />
-                <span class="hint">Autocompleta con sets ya guardados.</span>
+                <input id="edicion" type="text" list="dlSet" placeholder="Ej: Scarlet &amp; Violet" aria-describedby="hint-edicion" />
+                <span class="hint" id="hint-edicion">Autocompleta con sets ya guardados.</span>
               </label>
 
               <label class="field">
                 <span class="label">Año</span>
-                <input id="anio" type="number" list="dlAnio" inputmode="numeric" min="1996" max="2100" placeholder="Ej: 2024" />
-                <span class="hint">Autocompleta con años existentes.</span>
+                <input id="anio" type="number" list="dlAnio" inputmode="numeric" min="1996" max="2100" placeholder="Ej: 2024" aria-describedby="hint-anio" />
+                <span class="hint" id="hint-anio">Autocompleta con años existentes.</span>
               </label>
 
               <label class="field span-2">
                 <span class="label">Nombre</span>
-                <input id="nombre" type="text" placeholder="Ej: Pikachu" required />
+                <input id="nombre" type="text" placeholder="Ej: Pikachu" required aria-required="true" />
               </label>
             </div>
           </section>
 
           <!-- Tipo & Stats -->
-          <section class="form-section">
+          <section class="form-section" aria-label="Tipo y stats">
             <div class="section-title">Tipo &amp; Stats</div>
             <div class="grid">
               <label class="field">
                 <span class="label">Tipo</span>
-                <input id="categoria" type="text" list="dlTipo" placeholder="Ej: Pokémon / Entrenador / Energía" />
-                <span class="hint">Autocompleta con tipos existentes.</span>
+                <input id="categoria" type="text" list="dlTipo" placeholder="Ej: Pokémon / Entrenador / Energía" aria-describedby="hint-tipo" />
+                <span class="hint" id="hint-tipo">Autocompleta con tipos existentes.</span>
               </label>
 
               <label class="field">
                 <span class="label">Subtipo</span>
-                <input id="subtipo" type="text" list="dlSubtipo" placeholder="Ej: Básico / Fase 1 / Item / Supporter…" />
-                <span class="hint">Autocompleta con subtipos ya guardados.</span>
+                <input id="subtipo" type="text" list="dlSubtipo" placeholder="Ej: Básico / Fase 1 / Item / Supporter…" aria-describedby="hint-subtipo" />
+                <span class="hint" id="hint-subtipo">Autocompleta con subtipos ya guardados.</span>
               </label>
 
               <label class="field">
                 <span class="label">Elemento</span>
-                <input id="atributo" type="text" list="dlElemento" placeholder="Ej: Eléctrico / Fuego / Agua…" />
-                <span class="hint">Autocompleta con elementos ya guardados.</span>
+                <input id="atributo" type="text" list="dlElemento" placeholder="Ej: Eléctrico / Fuego / Agua…" aria-describedby="hint-elemento" />
+                <span class="hint" id="hint-elemento">Autocompleta con elementos ya guardados.</span>
               </label>
 
               <label class="field">
@@ -247,25 +263,25 @@
           </section>
 
           <!-- Evolución -->
-          <section class="form-section">
+          <section class="form-section" aria-label="Evolución">
             <div class="section-title">Evolución</div>
             <div class="grid">
               <label class="field span-2">
                 <span class="label">Evoluciona de</span>
-                <input id="evoluciona_de" type="text" placeholder="Ej: Pichu (si aplica)" />
-                <span class="hint">Si la carta dice “Evoluciona de …”.</span>
+                <input id="evoluciona_de" type="text" placeholder="Ej: Pichu (si aplica)" aria-describedby="hint-evo-de" />
+                <span class="hint" id="hint-evo-de">Si la carta dice “Evoluciona de …”.</span>
               </label>
 
               <label class="field span-2">
                 <span class="label">Evoluciona a</span>
-                <input id="evoluciona_a" type="text" placeholder="Ej: Raichu (si aplica)" />
-                <span class="hint">Si sabes a qué evoluciona (opcional).</span>
+                <input id="evoluciona_a" type="text" placeholder="Ej: Raichu (si aplica)" aria-describedby="hint-evo-a" />
+                <span class="hint" id="hint-evo-a">Si sabes a qué evoluciona (opcional).</span>
               </label>
             </div>
           </section>
 
           <!-- Inventario -->
-          <section class="form-section">
+          <section class="form-section" aria-label="Inventario">
             <div class="section-title">Inventario</div>
             <div class="grid">
               <label class="field">
@@ -275,7 +291,15 @@
 
               <label class="field">
                 <span class="label">Idioma</span>
-                <input id="idioma" type="text" placeholder="Ej: ES / EN / JP" />
+                <input
+                  id="idioma"
+                  type="text"
+                  list="dlIdioma"
+                  placeholder="Ej: ES / EN / JP"
+                  autocapitalize="characters"
+                  aria-describedby="hint-idioma"
+                />
+                <span class="hint" id="hint-idioma">Elige de la lista o escribe uno nuevo si toca.</span>
               </label>
 
               <label class="field">
@@ -291,12 +315,12 @@
           </section>
 
           <!-- Media -->
-          <section class="form-section">
+          <section class="form-section" aria-label="Media">
             <div class="section-title">Media</div>
             <div class="grid">
               <label class="field span-2">
                 <span class="label">ImagenURL</span>
-                <input id="imagenurl" type="url" placeholder="https://…" />
+                <input id="imagenurl" type="url" placeholder="https://…" inputmode="url" />
                 <span class="hint">Link directo a la imagen (si tienes).</span>
               </label>
 
@@ -309,7 +333,7 @@
           </section>
 
           <!-- Notas -->
-          <section class="form-section">
+          <section class="form-section" aria-label="Notas">
             <div class="section-title">Notas</div>
             <label class="field">
               <textarea id="notas" rows="4" placeholder="Notas, estado, dónde la conseguiste, etc."></textarea>
