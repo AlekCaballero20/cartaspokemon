@@ -11,6 +11,7 @@
    - ✅ No envía EnergíaCoste / atk
    - ✅ Mask Identidad (#): auto "/" (Ej: 012/198)
    - ✅ Click en botón Editar o en la fila
+   - ✅ Anti-duplicados al agregar: avisa y permite (sumar cantidad / duplicar / descartar)
 ============================ */
 
 "use strict";
@@ -89,6 +90,11 @@ function cleanListValue_(v) {
   return String(v ?? "").trim().replace(/\s+/g, " ");
 }
 
+function toInt_(v, fallback = 0) {
+  const n = Number(String(v ?? "").trim());
+  return Number.isFinite(n) ? Math.trunc(n) : fallback;
+}
+
 /* =========================
    STATE
 ========================= */
@@ -128,6 +134,9 @@ function init() {
   // 4) datalists (incluye idioma)
   ensureDatalists_();
   seedIdiomaDefaults_(); // ✅ importantico
+
+  // 5) anti-duplicados (dialog ready)
+  ensureDupDialog_();
 
   bindUI();
   bindNetwork();
@@ -451,7 +460,7 @@ function resolveSheetRowIndexById(_id) {
   if (idIdx < 0) return "";
 
   const j = state.rows.findIndex((r, i) => i > 0 && String(r?.[idIdx] || "") === _id);
-  return j >= 1 ? j + 1 : "";
+  return j >= 1 ? String(j + 1) : "";
 }
 
 /* =========================
@@ -539,6 +548,135 @@ function val(id) {
 }
 
 /* =========================
+   DUPLICADOS (anti-repeat)
+   - Solo aplica cuando intentas "add"
+   - Detecta por fingerprint configurable
+   - Opciones: sumar cantidad / duplicar / descartar
+========================= */
+
+// Define qué significa "misma carta" para ustedes.
+// Recomendación: si "num" suele venir, es lo más fuerte.
+// Si "num" a veces falta, "nombre+edicion+idioma" ayuda a no meter la pata.
+const DUP_KEYS = Object.freeze([
+  "num",
+  "edicion",
+  "idioma",
+  // fallback suave (si el num viene vacío, el nombre ayuda)
+  "nombre",
+]);
+
+function fingerprintFromValues_(obj) {
+  const parts = DUP_KEYS.map((k) => norm(String(obj?.[k] ?? "")));
+  return parts.join("|");
+}
+
+function fingerprintFromForm_() {
+  const obj = {
+    nombre: val("nombre"),
+    num: val("num"),
+    edicion: val("edicion"),
+    idioma: val("idioma"),
+  };
+  return fingerprintFromValues_(obj);
+}
+
+function fingerprintFromRow_(row) {
+  const obj = {
+    nombre: getCell(row, "nombre"),
+    num: getCell(row, "num"),
+    edicion: getCell(row, "edicion"),
+    idioma: getCell(row, "idioma"),
+  };
+  return fingerprintFromValues_(obj);
+}
+
+function findDuplicateRow_() {
+  const fp = fingerprintFromForm_();
+
+  // si todo está vacío, no molestamos
+  if (!fp.replace(/\|/g, "")) return null;
+
+  for (const row of (state.data || [])) {
+    if (fingerprintFromRow_(row) === fp) return row;
+  }
+  return null;
+}
+
+function ensureDupDialog_() {
+  if (document.getElementById("dupDialog")) return;
+
+  const d = document.createElement("dialog");
+  d.id = "dupDialog";
+
+  // Inline styles para que no dependa de CSS (porque humanos).
+  d.style.padding = "0";
+  d.style.border = "none";
+  d.style.borderRadius = "16px";
+  d.style.maxWidth = "520px";
+  d.style.width = "min(520px, calc(100vw - 24px))";
+  d.style.boxShadow = "0 18px 50px rgba(0,0,0,.18)";
+  d.style.overflow = "hidden";
+
+  d.innerHTML = `
+    <form method="dialog" style="margin:0; padding:16px 16px 14px 16px; background:#fff; font-family:system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial;">
+      <div style="display:flex; align-items:flex-start; gap:12px;">
+        <div style="width:38px; height:38px; border-radius:12px; background:#f2f4ff; display:grid; place-items:center; flex:0 0 auto;">
+          <span style="font-size:18px;">🧩</span>
+        </div>
+        <div style="flex:1 1 auto;">
+          <h3 style="margin:0; font-size:16px; line-height:1.2;">Esta carta ya existe</h3>
+          <p id="dupDialogMsg" style="margin:6px 0 0 0; font-size:13px; opacity:.8;"></p>
+        </div>
+      </div>
+
+      <div style="margin-top:14px; display:flex; gap:10px; justify-content:flex-end; flex-wrap:wrap;">
+        <button value="discard" style="padding:10px 12px; border-radius:12px; border:1px solid rgba(0,0,0,.12); background:#fff; cursor:pointer;">
+          Descartar
+        </button>
+        <button value="duplicate" style="padding:10px 12px; border-radius:12px; border:1px solid rgba(0,0,0,.12); background:#fff; cursor:pointer;">
+          Crear duplicado
+        </button>
+        <button value="merge" autofocus style="padding:10px 12px; border-radius:12px; border:1px solid rgba(0,0,0,.12); background:#0c41c4; color:#fff; cursor:pointer;">
+          Sumar cantidad
+        </button>
+      </div>
+
+      <p style="margin:10px 0 0 0; font-size:12px; opacity:.7;">
+        Si eliges “Sumar cantidad”, se actualizará la fila existente en lugar de crear otra.
+      </p>
+    </form>
+  `;
+
+  document.body.appendChild(d);
+}
+
+function askDupAction_(dupRow) {
+  ensureDupDialog_();
+  const d = document.getElementById("dupDialog");
+  const msg = document.getElementById("dupDialogMsg");
+
+  const name = String(getCell(dupRow, "nombre") || "").trim();
+  const num  = String(getCell(dupRow, "num") || "").trim();
+  const set  = String(getCell(dupRow, "edicion") || "").trim();
+  const lang = String(getCell(dupRow, "idioma") || "").trim();
+
+  msg.textContent =
+    `Coincide con: ${name || "(sin nombre)"}`
+    + (num ? ` · #${num}` : "")
+    + (set ? ` · ${set}` : "")
+    + (lang ? ` · ${lang}` : "");
+
+  return new Promise((resolve) => {
+    const onClose = () => {
+      d.removeEventListener("close", onClose);
+      resolve(String(d.returnValue || "discard"));
+    };
+    d.addEventListener("close", onClose);
+    d.showModal();
+  });
+}
+
+/* =========================
    SAVE payload builder (PRO: data por header real)
 ========================= */
 function buildDataForSave_() {
@@ -579,8 +717,9 @@ async function onSave(e) {
   e.preventDefault();
   if (state.isSaving) return;
 
-  const rowIndex = (dom.rowIndex?.value || "").trim();
-  const action = rowIndex ? "update" : "add";
+  const rowIndexRaw = (dom.rowIndex?.value || "").trim();
+  const isEdit = Boolean(rowIndexRaw);
+  const action = isEdit ? "update" : "add";
 
   const name = val("nombre");
   if (!name) {
@@ -616,6 +755,48 @@ async function onSave(e) {
     return;
   }
 
+  // =========================
+  // DUP CHECK (solo en ADD)
+  // =========================
+  if (action === "add") {
+    const dupRow = findDuplicateRow_();
+    if (dupRow) {
+      const choice = await askDupAction_(dupRow);
+
+      if (choice === "discard") {
+        toast("Listo, no se agregó 👍", CFG.NET.toastMs);
+        setFormMeta("No se agregó (duplicada).");
+        return;
+      }
+
+      if (choice === "merge") {
+        const dupId = String(getCell(dupRow, "_id") || "");
+        const dupSheetRowIndex = resolveSheetRowIndexById(dupId);
+
+        if (!dupId || !dupSheetRowIndex) {
+          toast("Encontré duplicado pero no pude ubicar la fila.", CFG.NET.toastMs);
+          setFormMeta("Duplicado detectado, pero faltó rowIndex.");
+          return;
+        }
+
+        // Convertimos ADD -> UPDATE
+        state.selected = { rowArray: dupRow, sheetRowIndex: dupSheetRowIndex, id: dupId };
+        if (dom.rowIndex) dom.rowIndex.value = String(dupSheetRowIndex);
+
+        const existingQty = toInt_(getCell(dupRow, "cantidad"), 0);
+        const newQty = toInt_(val("cantidad"), 0);
+        const finalQty = Math.max(0, existingQty + newQty);
+
+        if (dom.f.cantidad) dom.f.cantidad.value = String(finalQty);
+
+        toast(`Duplicada: sumé cantidad (${existingQty} + ${newQty} = ${finalQty}) ✅`, CFG.NET.toastMs);
+        setFormMeta("Duplicada: sumando cantidad y actualizando.");
+      }
+
+      // choice === "duplicate" -> seguimos normal como ADD
+    }
+  }
+
   let built;
   try {
     built = buildDataForSave_();
@@ -641,6 +822,10 @@ async function onSave(e) {
     // ok
   }
 
+  // Re-evaluamos rowIndex después del merge
+  const rowIndex = (dom.rowIndex?.value || "").trim();
+  const finalAction = rowIndex ? "update" : "add";
+
   try {
     state.isSaving = true;
     lockSave(true);
@@ -649,7 +834,7 @@ async function onSave(e) {
     setStatus(dom.statusDot, dom.statusText, "loading", "Guardando…");
 
     const payload = {
-      action,
+      action: finalAction,
       rowIndex: rowIndex || "",
       id: built._id,
       data: built.data,
@@ -664,7 +849,8 @@ async function onSave(e) {
 
     await loadTSV(true);
 
-    if (action === "add") closeDrawer();
+    // Si fue add real (no merge), cerramos
+    if (finalAction === "add") closeDrawer();
   } catch (err) {
     console.error(err);
     toast("No se pudo guardar (conexión o bloqueo).", CFG.NET.toastMs);
